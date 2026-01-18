@@ -75,52 +75,12 @@ pub fn pull_request_body(
     created_with: Option<&str>,
     created_with_url: Option<&DecodedUrl>,
 ) -> String {
-    const FRUITS: [&str; 16] = [
-        "apple",
-        "banana",
-        "blueberries",
-        "cherries",
-        "grapes",
-        "green_apple",
-        "kiwi_fruit",
-        "lemon",
-        "mango",
-        "melon",
-        "peach",
-        "pear",
-        "pineapple",
-        "strawberry",
-        "tangerine",
-        "watermelon",
-    ];
-
     let mut body = String::new();
+    
     if let Some(alternative_text) = alternative_text {
         let _ = writeln!(body, "### {alternative_text}");
     } else {
-        let mut rng = rand::rng();
-
-        let emoji = if rng.random_ratio(1, 50) {
-            FRUITS[rng.random_range(0..FRUITS.len())]
-        } else {
-            "rocket"
-        };
-
-        body.push_str("### Pull request has been created with ");
-
-        if let (Some(tool_name), Some(tool_url)) = (created_with, created_with_url) {
-            let _ = write!(body, "[{tool_name}]({tool_url})");
-        } else {
-            let _ = write!(
-                body,
-                "[{}]({}) v{}",
-                crate_name!(),
-                env!("CARGO_PKG_REPOSITORY"),
-                crate_version!()
-            );
-        }
-
-        let _ = writeln!(body, " :{emoji}:");
+        body.push_str("### Pull request created with [komac\\\\kwanix](https://github.com/Dvd-Znf/kwanix) ❄️🌨️");
     }
 
     if !issue_resolves.is_empty() {
