@@ -1,3 +1,5 @@
+Purpose of this branch is to make patching komac for https://github.com/Dvd-Znf/kwanix easier,  
+  
 <h2 align="center">
   <img height="100" alt="komac" src="assets/branding/banner.svg" />
   <br>
