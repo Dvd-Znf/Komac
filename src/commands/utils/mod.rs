@@ -38,12 +38,7 @@ pub fn prompt_existing_pull_request(
         created_at.time()
     );
     println!("{}", pull_request.url.blue());
-    if *CI {
-        // Exit instead of proceeding in CI environments
-        Ok(false)
-    } else {
-        confirm_prompt("Would you like to proceed?")
-    }
+    Ok(false)
 }
 
 pub async fn write_changes_to_dir(changes: &[(String, String)], output: &Utf8Path) -> Result<()> {
