@@ -15,13 +15,11 @@ use std::{
     io::{Read, Seek, SeekFrom},
 };
 
-use byteorder::{LE, ReadBytesExt};
 use bzip2::read::BzDecoder;
-use camino::{Utf8Path, Utf8PathBuf};
+use camino::Utf8Path;
 use flate2::{Decompress, read::ZlibDecoder};
 use liblzma::read::XzDecoder;
 use msi::Language;
-use protobuf::Enum;
 use registry::Registry;
 use state::NsisState;
 use strsim::levenshtein;
@@ -35,23 +33,26 @@ use winget_types::{
         Installer, InstallerType, Scope,
     },
 };
-use yara_x::mods::{PE, pe::Machine};
 use zerocopy::FromBytes;
 
 use super::{
     super::extensions::EXE,
     nsis::{
         entry::{Entry, EntryError},
-        file_system::Item,
+        file_system::FsEntry,
         first_header::FirstHeader,
         header::{
             Compression, Decoder, Decompressed, Header, block::BlockHeaders,
             flags::CommonHeaderFlags,
         },
     },
-    utils::{LzmaStreamHeader, RELATIVE_PROGRAM_FILES_64},
+    pe::{PE, utils::machine_from_exe_reader},
+    utils::{LzmaStreamHeader, RELATIVE_PROGRAM_FILES_64, RELATIVE_TEMP_FOLDER},
 };
-use crate::{analysis::Installers, traits::FromMachine};
+use crate::{
+    analysis::Installers,
+    traits::{FromMachine, IntoWingetArchitecture},
+};
 
 #[derive(Error, Debug)]
 pub enum NsisError {
@@ -77,7 +78,10 @@ pub struct Nsis {
 
 impl Nsis {
     pub fn new<R: Read + Seek>(mut reader: R, pe: &PE) -> Result<Self, NsisError> {
-        let first_header_offset = pe.overlay.offset.ok_or(NsisError::NotNsisFile)?;
+        // Get the PE overlay offset
+        let first_header_offset = pe.overlay_offset().ok_or(NsisError::NotNsisFile)?;
+
+        let manifest = pe.manifest(&mut reader).ok();
 
         // Seek to the first header
         reader
@@ -103,16 +107,17 @@ impl Nsis {
         let (_flags, rest) = CommonHeaderFlags::ref_from_prefix(&decompressed_data)
             .map_err(|error| NsisError::ZeroCopy(error.to_string()))?;
 
-        let architecture = Architecture::from_machine(pe.machine());
+        let architecture = pe.winget_architecture();
 
-        let (blocks, rest) = BlockHeaders::read_dynamic_from_prefix(rest, architecture)?;
+        let (blocks, rest) =
+            BlockHeaders::read_dynamic_from_prefix(rest, architecture.is_64_bit())?;
 
         let (header, _) = Header::ref_from_prefix(rest)
             .map_err(|error| NsisError::ZeroCopy(error.to_string()))?;
 
         debug!(?header);
 
-        let mut state = NsisState::new(pe, &decompressed_data, header, &blocks)?;
+        let mut state = NsisState::new(&decompressed_data, header, &blocks, manifest.as_deref())?;
 
         // https://nsis.sourceforge.io/Reference/.onInit
         if header.code_on_init() != -1 {
@@ -145,13 +150,13 @@ impl Nsis {
         let mut architecture =
             Option::from(architecture).filter(|&architecture| architecture != Architecture::X86);
 
-        for directory in state.file_system.directories().map(Item::name) {
-            // If there is an app-64 file, the app is x64.
-            // If there is an app-32 file or both files are present, the app is x86
+        for entry in state.file_system.entries().map(FsEntry::name) {
+            // If there is an app-64 entry, the app is x64.
+            // If there is an app-32 entry or both entries are present, the app is x86.
             // (x86 apps can still install on x64 systems)
-            if directory == APP_64 && architecture.is_none() {
+            if entry.contains(APP_64) && architecture.is_none() {
                 architecture = Some(Architecture::X64);
-            } else if directory == APP_32 {
+            } else if entry.contains(APP_32) {
                 architecture = Some(Architecture::X86);
             }
         }
@@ -209,31 +214,14 @@ impl Nsis {
                             decoder
                         };
 
-                        let mut void = io::sink();
-
                         if is_solid {
                             // Seek to file
-                            io::copy(&mut decoder.by_ref().take(position), &mut void).ok()?;
+                            io::copy(&mut decoder.by_ref().take(position), &mut io::sink()).ok()?;
                         }
 
-                        // Seek to COFF header offset inside exe
-                        io::copy(&mut decoder.by_ref().take(0x3C), &mut void).ok()?;
-
-                        let coff_offset = decoder.read_u32::<LE>().ok()?;
-
-                        // Seek to machine value
-                        io::copy(
-                            &mut decoder
-                                .by_ref()
-                                .take(u64::from(coff_offset.checked_sub(0x3C)?)),
-                            &mut void,
-                        )
-                        .ok()?;
-
-                        let machine = decoder.read_u16::<LE>().ok()?;
-                        Machine::from_i32(machine.into())
+                        let machine = machine_from_exe_reader(decoder).ok()?;
+                        Some(Architecture::from_machine(machine))
                     })
-                    .map(Architecture::from_machine)
             });
 
         Ok(Self {
@@ -285,7 +273,18 @@ impl Installers for Nsis {
                 AppsAndFeaturesEntries::new()
             },
             installation_metadata: InstallationMetadata {
-                default_install_location: self.install_directory.as_deref().map(Utf8PathBuf::from),
+                default_install_location: self
+                    .install_directory
+                    .as_deref()
+                    .map(Utf8Path::new)
+                    .filter(|path| {
+                        !path.components().next().is_none_or(|component| {
+                            component
+                                .as_str()
+                                .eq_ignore_ascii_case(RELATIVE_TEMP_FOLDER)
+                        })
+                    })
+                    .map(Utf8Path::to_path_buf),
                 ..InstallationMetadata::default()
             },
             ..Installer::default()

@@ -1,4 +1,8 @@
-use std::{collections::HashMap, mem};
+use std::{
+    collections::HashMap,
+    io::{Read, Seek},
+    mem,
+};
 
 use color_eyre::eyre::Result;
 use futures_util::{StreamExt, TryStreamExt, stream};
@@ -9,21 +13,21 @@ use crate::{analysis::Analyzer, download::DownloadedFile};
 
 pub async fn process_files(
     files: &mut [DownloadedFile],
-) -> Result<HashMap<DecodedUrl, Analyzer<'_>>> {
+) -> Result<HashMap<DecodedUrl, Analyzer<'_, impl Read + Seek>>> {
     stream::iter(files.iter_mut().map(
         |DownloadedFile {
+             file,
              url,
-             mmap,
              sha_256,
              file_name,
              last_modified,
              ..
          }| async move {
-            let mut file_analyser = Analyzer::new(mmap, file_name)?;
+            let mut file_analyzer = Analyzer::new(file, file_name)?;
             let architecture = url
                 .override_architecture()
                 .or_else(|| Architecture::from_url(url.as_str()));
-            for installer in &mut file_analyser.installers {
+            for installer in &mut file_analyzer.installers {
                 if let Some(architecture) = architecture {
                     installer.architecture = architecture;
                 }
@@ -32,8 +36,8 @@ pub async fn process_files(
                 installer.sha_256 = sha_256.clone();
                 installer.release_date = *last_modified;
             }
-            file_analyser.file_name = mem::take(file_name);
-            Ok((mem::take(url.inner_mut()), file_analyser))
+            file_analyzer.file_name = mem::take(file_name);
+            Ok((mem::take(url.inner_mut()), file_analyzer))
         },
     ))
     .buffer_unordered(num_cpus::get())

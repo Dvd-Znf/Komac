@@ -35,7 +35,6 @@ use crate::{
     },
     manifests::Url,
     match_installers::match_installers,
-    terminal::Hyperlinkable,
     token::TokenManager,
     traits::{LocaleExt, path::NormalizePath},
 };
@@ -139,7 +138,7 @@ impl UpdateVersion {
         let mut download_results = process_files(&mut files).await?;
         let installer_results = download_results
             .iter_mut()
-            .flat_map(|(_url, analyser)| mem::take(&mut analyser.installers))
+            .flat_map(|(_url, analyzer)| mem::take(&mut analyzer.installers))
             .collect::<Vec<_>>();
         let previous_installers = mem::take(&mut manifests.installer.installers)
             .into_iter()
@@ -161,7 +160,7 @@ impl UpdateVersion {
         let installers = matched_installers
             .into_iter()
             .map(|(previous_installer, new_installer)| {
-                let analyser = &download_results[&new_installer.url];
+                let analyzer = &download_results[&new_installer.url];
                 let installer_type = match previous_installer.r#type {
                     Some(InstallerType::Portable) => previous_installer.r#type,
                     _ => match new_installer.r#type {
@@ -187,7 +186,7 @@ impl UpdateVersion {
 
                 if let Some(nested_files) = nested_files_to_fix {
                     installer.nested_installer_files =
-                        fix_relative_paths(nested_files, analyser.zip.as_ref());
+                        fix_relative_paths(nested_files, analyzer.zip.as_ref());
                 }
 
                 for entry in &mut installer.apps_and_features_entries {
@@ -261,7 +260,7 @@ impl UpdateVersion {
         ));
         pr_progress.enable_steady_tick(SPINNER_TICK_RATE);
 
-        let pull_request_url = github
+        let pull_request = github
             .add_version()
             .identifier(&self.package_identifier)
             .version(&self.package_version)
@@ -276,14 +275,10 @@ impl UpdateVersion {
 
         pr_progress.finish_and_clear();
 
-        println!(
-            "{} created a {} to {WINGET_PKGS_FULL_NAME}",
-            "Successfully".green(),
-            "pull request".hyperlink(&pull_request_url)
-        );
+        pull_request.print_success();
 
         if self.open_pr {
-            open::that(pull_request_url.as_str())?;
+            open::that(pull_request.url().as_str())?;
         }
 
         Ok(())

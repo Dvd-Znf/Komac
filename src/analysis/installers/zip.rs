@@ -1,14 +1,13 @@
 use std::{
     collections::{BTreeSet, HashMap},
     io,
-    io::{Read, Seek},
+    io::{Read, Seek, SeekFrom},
     mem,
 };
 
 use camino::{Utf8Path, Utf8PathBuf};
 use color_eyre::eyre::Result;
 use inquire::{MultiSelect, min_length};
-use memmap2::Mmap;
 use tracing::debug;
 use winget_types::installer::{Installer, InstallerType, NestedInstallerFiles};
 use zip::ZipArchive;
@@ -89,10 +88,10 @@ impl<R: Read + Seek> Zip<R> {
             if let Ok(mut chosen_file) = zip.by_name(chosen_file_name.as_str()) {
                 let mut temp_file = tempfile::tempfile()?;
                 io::copy(&mut chosen_file, &mut temp_file)?;
-                let map = unsafe { Mmap::map(&temp_file) }?;
-                let file_analyser = Analyzer::new(&map, chosen_file_name.as_str())?;
+                temp_file.seek(SeekFrom::Start(0))?;
+                let file_analyzer = Analyzer::new(&mut temp_file, chosen_file_name.as_str())?;
                 installers = Some(
-                    file_analyser
+                    file_analyzer
                         .installers
                         .into_iter()
                         .map(|installer| Installer {
@@ -136,13 +135,13 @@ impl<R: Read + Seek> Zip<R> {
                 &mut self.archive.by_name(first_choice.as_str())?,
                 &mut temp_file,
             )?;
-            let map = unsafe { Mmap::map(&temp_file) }?;
-            let file_analyser = Analyzer::new(&map, first_choice.file_name().unwrap())?;
+            temp_file.seek(SeekFrom::Start(0))?;
+            let file_analyzer = Analyzer::new(&mut temp_file, first_choice.file_name().unwrap())?;
             let nested_installer_files = chosen
                 .into_iter()
                 .map(|path| {
                     Ok(NestedInstallerFiles {
-                        portable_command_alias: if file_analyser.installers[0].r#type
+                        portable_command_alias: if file_analyzer.installers[0].r#type
                             == Some(InstallerType::Portable)
                         {
                             Some(required_prompt(None, None::<&str>)?)
@@ -153,7 +152,7 @@ impl<R: Read + Seek> Zip<R> {
                     })
                 })
                 .collect::<Result<BTreeSet<_>>>()?;
-            self.installers = file_analyser
+            self.installers = file_analyzer
                 .installers
                 .into_iter()
                 .map(|installer| Installer {

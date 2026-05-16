@@ -125,7 +125,7 @@ impl RemoveVersion {
             return Ok(());
         }
 
-        let pull_request_url = github
+        let pull_request = github
             .remove_version()
             .identifier(&self.package_identifier)
             .version(&self.package_version)
@@ -137,7 +137,7 @@ impl RemoveVersion {
             .await?;
 
         if self.open_pr {
-            open::that(pull_request_url.as_str())?;
+            open::that(pull_request.url().as_str())?;
         }
 
         Ok(())

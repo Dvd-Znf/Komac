@@ -37,7 +37,7 @@ use crate::{
     download::Downloader,
     download_file::process_files,
     github::{
-        GITHUB_HOST, WINGET_PKGS_FULL_NAME,
+        GITHUB_HOST,
         client::GitHub,
         utils::{PackagePath, pull_request::pr_changes},
     },
@@ -48,7 +48,6 @@ use crate::{
         radio_prompt,
         text::{confirm_prompt, optional_prompt, required_prompt},
     },
-    terminal::Hyperlinkable,
     token::TokenManager,
 };
 
@@ -224,17 +223,17 @@ impl NewVersion {
         let mut download_results = process_files(&mut files).await?;
 
         let mut installers = Vec::new();
-        for analyser in &mut download_results.values_mut() {
+        for analyzer in &mut download_results.values_mut() {
             let mut silent = None;
             let mut silent_with_progress = None;
             let mut custom = None;
-            if analyser
+            if analyzer
                 .installers
                 .iter()
                 .any(|installer| installer.r#type == Some(InstallerType::Exe))
             {
-                if confirm_prompt(&format!("Is {} a portable exe?", analyser.file_name))? {
-                    for installer in &mut analyser.installers {
+                if confirm_prompt(&format!("Is {} a portable exe?", analyzer.file_name))? {
+                    for installer in &mut analyzer.installers {
                         installer.r#type = Some(InstallerType::Portable);
                     }
                 }
@@ -243,20 +242,20 @@ impl NewVersion {
                     None, None,
                 )?);
             }
-            if analyser
+            if analyzer
                 .installers
                 .iter()
                 .any(|installer| installer.r#type == Some(InstallerType::Portable))
             {
                 custom = optional_prompt::<CustomSwitch, &str>(None, None)?;
             }
-            if let Some(zip) = &mut analyser.zip {
+            if let Some(zip) = &mut analyzer.zip {
                 zip.prompt()?;
-                for (analyser_installer, zip_installer) in
-                    analyser.installers.iter_mut().zip(zip.installers.iter())
+                for (analyzer_installer, zip_installer) in
+                    analyzer.installers.iter_mut().zip(zip.installers.iter())
                 {
-                    analyser_installer.nested_installer_type = zip_installer.nested_installer_type;
-                    analyser_installer.nested_installer_files =
+                    analyzer_installer.nested_installer_type = zip_installer.nested_installer_type;
+                    analyzer_installer.nested_installer_files =
                         zip_installer.nested_installer_files.clone();
                 }
             }
@@ -265,16 +264,16 @@ impl NewVersion {
                 .maybe_silent_with_progress(silent_with_progress)
                 .maybe_custom(custom)
                 .build();
-            let mut analyser_installers = mem::take(&mut analyser.installers);
-            for installer in &mut analyser_installers {
+            let mut analyzer_installers = mem::take(&mut analyzer.installers);
+            for installer in &mut analyzer_installers {
                 if !switches.is_empty() {
                     installer.switches = switches.clone();
                 }
             }
-            installers.extend(analyser_installers);
+            installers.extend(analyzer_installers);
         }
 
-        let default_locale = required_prompt(self.package_locale, None::<&str>)?;
+        let default_locale = required_prompt(self.package_locale, Some("en-US"))?;
         let mut installer_manifest = InstallerManifest {
             package_identifier: package_identifier.clone(),
             package_version: package_version.clone(),
@@ -316,8 +315,8 @@ impl NewVersion {
                 self.publisher,
                 download_results
                     .values()
-                    .find(|analyser| analyser.publisher.is_some())
-                    .and_then(|analyser| analyser.publisher.as_ref()),
+                    .find(|analyzer| analyzer.publisher.is_some())
+                    .and_then(|analyzer| analyzer.publisher.as_ref()),
             )?,
             publisher_url: optional_prompt(
                 self.publisher_url,
@@ -334,8 +333,8 @@ impl NewVersion {
                 self.package_name,
                 download_results
                     .values()
-                    .find(|analyser| analyser.package_name.is_some())
-                    .and_then(|analyser| analyser.package_name.as_ref()),
+                    .find(|analyzer| analyzer.package_name.is_some())
+                    .and_then(|analyzer| analyzer.package_name.as_ref()),
             )?,
             package_url: optional_prompt(
                 self.package_url,
@@ -357,8 +356,8 @@ impl NewVersion {
                 self.copyright,
                 download_results
                     .values()
-                    .find(|analyser| analyser.copyright.is_some())
-                    .and_then(|analyser| analyser.copyright.as_ref()),
+                    .find(|analyzer| analyzer.copyright.is_some())
+                    .and_then(|analyzer| analyzer.copyright.as_ref()),
             )?,
             copyright_url: optional_prompt(self.copyright_url, None::<&str>)?,
             short_description: required_prompt(
@@ -453,7 +452,7 @@ impl NewVersion {
         ));
         pr_progress.enable_steady_tick(SPINNER_TICK_RATE);
 
-        let pull_request_url = github
+        let pull_request = github
             .add_version()
             .identifier(&package_identifier)
             .version(&package_version)
@@ -467,14 +466,10 @@ impl NewVersion {
 
         pr_progress.finish_and_clear();
 
-        println!(
-            "{} created a {} to {WINGET_PKGS_FULL_NAME}",
-            "Successfully".green(),
-            "pull request".hyperlink(&pull_request_url)
-        );
+        pull_request.print_success();
 
         if self.open_pr {
-            open::that(pull_request_url.as_str())?;
+            open::that(pull_request.url().as_str())?;
         }
 
         Ok(())
